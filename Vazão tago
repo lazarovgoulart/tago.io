@@ -1,0 +1,136 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <EEPROM.h> // Biblioteca para utilizar a memória EEPROM do ESP32
+
+int sensorPin = 14;
+float flowRate;
+float flowMilliLitres;
+unsigned int flowMilliLitresTotal;
+
+// Definir variáveis para cálculo do tempo
+unsigned long currentTime;
+unsigned long previousTime;
+unsigned long elapsedTime;
+
+// Definir variáveis para conversão de frequência em fluxo
+float calibrationFactor = 25.0; // Ajuste para calibrar o sensor
+
+// Credenciais Wi-Fi
+const char* SSID = "COND  RUBI";
+const char* PASSWORD = "condrubi1054";
+
+// Credenciais Tago
+const char* DEVICE_TOKEN = "b24a5cad-17a2-4126-ac38-5071113aefe6";
+const char* SERVER = "api.tago.io";
+
+// Credenciais MQTT
+const char* MQTT_SERVER = "test.mosquitto.org";
+const int MQTT_PORT = 1883;
+const char* MQTT_USER = "";
+const char* MQTT_PASSWORD = "";
+const char* MQTT_TOPIC = "testelzr";
+const char* MQTT_TOPIC1 = "testelzr1";
+
+
+WiFiClient wifiClient;
+PubSubClient mqttClient(wifiClient);
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(sensorPin, INPUT);
+  pulseCount = 0;
+  flowRate = 0.0;
+  flowMilliLitres = 0.0;
+
+  // Inicializar a memória EEPROM
+  EEPROM.begin(sizeof(flowMilliLitresTotal));
+
+  // Ler o valor de flowMilliLitresTotal armazenado na EEPROM
+  EEPROM.get(0, flowMilliLitresTotal);
+
+  // Conectar-se à rede Wi-Fi
+  WiFi.begin(SSID, PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Conectando-se à rede Wi-Fi...");
+  }
+  Serial.println("Conexão Wi-Fi estabelecida.");
+
+  // Conectar-se ao servidor MQTT
+  reconnectMQTT();
+}
+
+void loop() {
+  currentTime = millis(); //atualiza o tempo atual
+  elapsedTime = currentTime - previousTime; //calcula o tempo decorrido
+  if (elapsedTime > 1000) { //atualiza a leitura a cada segundo
+    detachInterrupt(digitalPinToInterrupt(sensorPin)); //desativa a interrupção
+    flowRate = ((1000.0 / elapsedTime) * pulseCount) / calibrationFactor; //calcula a vazão
+    flowMilliLitres = (flowRate / 60) * 1000; //calcula o fluxo em mililitros por segundo
+    flowMilliLitresTotal += flowMilliLitres; //calcula o total de fluxo
+    Serial.print("Vazao: ");
+    Serial.print(flowRate);
+    Serial.print(" L/min ");
+    Serial.print("Fluxo: ");
+    Serial.print(flowMilliLitres);
+    Serial.print(" ml/s ");
+    Serial.print("Total: ");
+    Serial.print(flowMilliLitresTotal);
+    Serial.println("ml");
+    pulseCount = 0; //zera a contagem de pulsos
+    previousTime = currentTime; //atualiza o tempo anterior
+    attachInterrupt(digitalPinToInterrupt(sensorPin), pulseCounter, FALLING); //reativa a interrupção
+  }
+
+  // Verificar se é meia-noite (00:00) novamente
+  unsigned long nowMillis = millis();
+  if (nowMillis >= millisAtMidnight()) {
+    // Armazenar o valor atual de flowMilliLitresTotal na EEPROM
+    EEPROM.put(0, flowMilliLitresTotal);
+    EEPROM.commit();
+    flowMilliLitresTotal = 0; // Zerar o total de fluxo
+  }
+
+  // Conexão MQTT e envio dos dados
+  if (!mqttClient.connected()) {
+    reconnectMQTT();
+  }
+  mqttClient.loop();
+  sendDataToTago();
+
+  // Aguarda 60 segundos
+  delay(60000);
+}
+
+// Função para contar pulsos
+void pulseCounter() {
+  pulseCount++;
+}
+
+// Função para obter o número de milissegundos até a meia-noite
+unsigned long millisAtMidnight() {
+  unsigned long nowMillis = millis();
+  unsigned long nowSeconds = nowMillis / 1000;
+  unsigned long midnightSeconds = (nowSeconds / 86400) * 86400 + 86400; // Próxima meia-noite em segundos
+  return midnightSeconds * 1000; // Converter de segundos para milissegundos
+}
+
+// Função para reconectar ao servidor MQTT
+void reconnectMQTT() {
+  while (!mqttClient.connected()) {
+    Serial.println("Conectando ao servidor MQTT...");
+    if (mqttClient.connect("esp32-client", MQTT_USER, MQTT_PASSWORD)) {
+      Serial.println("Conexão MQTT estabelecida.");
+    } else {
+      Serial.print("Falha na conexão MQTT, código de erro: ");
+      Serial.println(mqttClient.state());
+      delay(2000);
+    }
+  }
+}
+
+// Função para enviar os dados para o servidor Tago
+void sendDataToTago() {
+  // ... (resto do código para enviar os dados para o Tago) ...
+}
